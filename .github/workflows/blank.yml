@@ -1,4 +1,5 @@
-name: Build Multi‑Arch Docker Image
+name: Build Multi‑Arch Slim Docker Image (latest = slim)
+
 on:
   workflow_dispatch:
   schedule:
@@ -11,20 +12,16 @@ permissions:
 jobs:
   build-slim-amd64:
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.get-digest.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build AMD64 to local daemon
+      - name: Build AMD64 image locally (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -32,30 +29,34 @@ jobs:
           platforms: linux/amd64
           push: false
           outputs: type=docker
-          tags: ghcr.io/${{ github.repository }}:tmp-amd64
+          tags: local-build:amd64
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,scope=amd64,mode=max
 
-      - name: Slim AMD64
+      - name: Slim AMD64 (local only)
         uses: kitabisa/docker-slim-action@master
         env:
           DSLIM_HTTP_PROBE: false
           DSLIM_INCLUDE_PATH: /app
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
-          target: ghcr.io/${{ github.repository }}:tmp-amd64
-          tag: tmp-slim-amd64
+          target: local-build:amd64
+          tag: local-slim:amd64
 
-      - name: Push temporary amd64 slim
-        run: docker push ghcr.io/${{ github.repository }}:tmp-slim-amd64
+      - name: Get slim image digest
+        id: get-digest
+        run: |
+          DIGEST=$(docker inspect --format='{{.RepoDigests}}' local-slim:amd64 | grep -o 'sha256:[0-9a-f]*')
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
 
-  build-slim-arm64:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Push slim-amd64 digest to GHCR
+        run: |
+          docker tag local-slim:amd64 ghcr.io/${{ github.repository }}/placeholder:amd64
+          docker push ghcr.io/${{ github.repository }}/placeholder:amd64
+        env:
+          GHCR_REGISTRY: ghcr.io
+          IMAGE_NAME: ${{ github.repository }}
+        # 此处仅为上传单架构层，placeholder标签后面会被manifest覆盖，你不需要使用placeholder标签
 
       - name: Login GHCR
         uses: docker/login-action@v3
@@ -64,7 +65,18 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build ARM64 to local daemon
+  build-slim-arm64:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.get-digest.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ARM64 image locally (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -72,22 +84,37 @@ jobs:
           platforms: linux/arm64
           push: false
           outputs: type=docker
-          tags: ghcr.io/${{ github.repository }}:tmp-arm64
+          tags: local-build:arm64
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,scope=arm64,mode=max
 
-      - name: Slim ARM64
+      - name: Slim ARM64 (local only)
         uses: kitabisa/docker-slim-action@master
         env:
           DSLIM_HTTP_PROBE: false
           DSLIM_INCLUDE_PATH: /app
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
-          target: ghcr.io/${{ github.repository }}:tmp-arm64
-          tag: tmp-slim-arm64
+          target: local-build:arm64
+          tag: local-slim:arm64
 
-      - name: Push temporary arm64 slim
-        run: docker push ghcr.io/${{ github.repository }}:tmp-slim-arm64
+      - name: Get slim image digest
+        id: get-digest
+        run: |
+          DIGEST=$(docker inspect --format='{{.RepoDigests}}' local-slim:arm64 | grep -o 'sha256:[0-9a-f]*')
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push slim-arm64 digest to GHCR
+        run: |
+          docker tag local-slim:arm64 ghcr.io/${{ github.repository }}/placeholder:arm64
+          docker push ghcr.io/${{ github.repository }}/placeholder:arm64
 
   final-manifest:
     runs-on: ubuntu-latest
@@ -100,13 +127,11 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create & push slim multi‑arch manifest
+      - name: Create multi‑arch manifest (latest = slim)
         run: |
-          docker manifest create ghcr.io/${{ github.repository }}:slim \
-            ghcr.io/${{ github.repository }}:tmp-slim-amd64 \
-            ghcr.io/${{ github.repository }}:tmp-slim-arm64
-          docker manifest push ghcr.io/${{ github.repository }}:slim
-
-      - name: Optional clean‑up temporary tags
-        run: |
-          echo "临时标签 tmp‑* 无需删除；GHCR标签无法直接通过docker cli删除，如需清理请网页端手动删除"
+          AMD64_DIGEST="${{ needs.build-slim-amd64.outputs.digest }}"
+          ARM64_DIGEST="${{ needs.build-slim-arm64.outputs.digest }}"
+          docker manifest create ghcr.io/${{ github.repository }}:latest \
+            ghcr.io/${{ github.repository }}@"${AMD64_DIGEST}" \
+            ghcr.io/${{ github.repository }}@"${ARM64_DIGEST}"
+          docker manifest push ghcr.io/${{ github.repository }}:latest
