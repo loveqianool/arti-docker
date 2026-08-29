@@ -29,7 +29,7 @@ jobs:
           platforms: linux/amd64
           push: false
           outputs: type=docker
-          tags: local-build:amd64
+          tags: local-build-amd64
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,scope=amd64,mode=max
 
@@ -37,26 +37,20 @@ jobs:
         uses: kitabisa/docker-slim-action@master
         env:
           DSLIM_HTTP_PROBE: false
-          DSLIM_INCLUDE_PATH: /app
+          DSLIM_INCLUDE_PATH: /var/lib/tor
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
-          target: local-build:amd64
-          tag: local-slim:amd64
+          target: local-build-amd64
+          # tag 参数不要填！slim 默认生成 local-build-amd64.slim
+
+      - name: Rename slim image
+        run: docker tag local-build-amd64.slim local-slim-amd64
 
       - name: Get slim image digest
         id: get-digest
         run: |
-          DIGEST=$(docker inspect --format='{{.RepoDigests}}' local-slim:amd64 | grep -o 'sha256:[0-9a-f]*')
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' local-slim-amd64 | cut -d'@' -f2)
           echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-
-      - name: Push slim-amd64 digest to GHCR
-        run: |
-          docker tag local-slim:amd64 ghcr.io/${{ github.repository }}/placeholder:amd64
-          docker push ghcr.io/${{ github.repository }}/placeholder:amd64
-        env:
-          GHCR_REGISTRY: ghcr.io
-          IMAGE_NAME: ${{ github.repository }}
-        # 此处仅为上传单架构层，placeholder标签后面会被manifest覆盖，你不需要使用placeholder标签
 
       - name: Login GHCR
         uses: docker/login-action@v3
@@ -64,6 +58,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push slim‑amd64 layer (required for manifest)
+        run: |
+          docker tag local-slim-amd64 ghcr.io/${{ github.repository }}:slim-amd64-tmp
+          docker push ghcr.io/${{ github.repository }}:slim-amd64-tmp
 
   build-slim-arm64:
     runs-on: ubuntu-24.04-arm
@@ -84,7 +83,7 @@ jobs:
           platforms: linux/arm64
           push: false
           outputs: type=docker
-          tags: local-build:arm64
+          tags: local-build-arm64
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,scope=arm64,mode=max
 
@@ -92,16 +91,18 @@ jobs:
         uses: kitabisa/docker-slim-action@master
         env:
           DSLIM_HTTP_PROBE: false
-          DSLIM_INCLUDE_PATH: /app
+          DSLIM_INCLUDE_PATH: /var/lib/tor
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
-          target: local-build:arm64
-          tag: local-slim:arm64
+          target: local-build-arm64
+
+      - name: Rename slim image
+        run: docker tag local-build-arm64.slim local-slim-arm64
 
       - name: Get slim image digest
         id: get-digest
         run: |
-          DIGEST=$(docker inspect --format='{{.RepoDigests}}' local-slim:arm64 | grep -o 'sha256:[0-9a-f]*')
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' local-slim-arm64 | cut -d'@' -f2)
           echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
 
       - name: Login GHCR
@@ -111,10 +112,10 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push slim-arm64 digest to GHCR
+      - name: Push slim‑arm64 layer (required for manifest)
         run: |
-          docker tag local-slim:arm64 ghcr.io/${{ github.repository }}/placeholder:arm64
-          docker push ghcr.io/${{ github.repository }}/placeholder:arm64
+          docker tag local-slim-arm64 ghcr.io/${{ github.repository }}:slim-arm64-tmp
+          docker push ghcr.io/${{ github.repository }}:slim-arm64-tmp
 
   final-manifest:
     runs-on: ubuntu-latest
@@ -127,7 +128,7 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create multi‑arch manifest (latest = slim)
+      - name: Create multi‑arch manifest → latest (slim)
         run: |
           AMD64_DIGEST="${{ needs.build-slim-amd64.outputs.digest }}"
           ARM64_DIGEST="${{ needs.build-slim-arm64.outputs.digest }}"
