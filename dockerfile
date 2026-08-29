@@ -8,6 +8,7 @@ RUN apk add --update git \
     pkgconfig \
     openssl-dev \
     perl \
+    sqlite-dev \
     make
 
 WORKDIR /opt
