@@ -37,7 +37,7 @@ jobs:
         uses: kitabisa/docker-slim-action@v1
         env:
           DSLIM_HTTP_PROBE: false
-          DSLIM_INCLUDE_PATH: /var/lib/tor
+          DSLIM_INCLUDE_PATH: /app
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
           target: local-build-amd64
@@ -87,7 +87,7 @@ jobs:
         uses: kitabisa/docker-slim-action@v1
         env:
           DSLIM_HTTP_PROBE: false
-          DSLIM_INCLUDE_PATH: /var/lib/tor
+          DSLIM_INCLUDE_PATH: /app
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
           target: local-build-arm64
