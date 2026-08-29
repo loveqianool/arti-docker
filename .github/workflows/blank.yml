@@ -1,4 +1,4 @@
-name: Build Multi‑Arch Slim Docker Image (docker‑slim‑action, latest=slim)
+name: Build Multi‑Arch Slim Docker Image
 
 on:
   workflow_dispatch:
@@ -129,3 +129,40 @@ jobs:
             ghcr.io/${{ github.repository }}@"${AMD64_DIGEST}" \
             ghcr.io/${{ github.repository }}@"${ARM64_DIGEST}"
           docker manifest push ghcr.io/${{ github.repository }}:latest
+
+  cleanup-tmp-tags:
+    runs-on: ubuntu-latest
+    needs: final-manifest
+    steps:
+      - name: Delete GHCR temporary tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          # 等待 GHCR API 索引同步，避免刚推送完查不到标签
+          echo "Waiting 20s for GHCR API sync..."
+          sleep 20
+
+          PKG="${OWNER}/${REPO}"
+          TAGS=("slim-amd64-tmp" "slim-arm64-tmp")
+
+          for T in "${TAGS[@]}"; do
+            echo "Fetching version id for tag: $T"
+            VER_ID=$(curl -fsSL \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/packages/container/$PKG/versions" |
+              jq -r '.[] | select(.metadata.container.tags | index("'"$T"'")) | .id')
+
+            if [[ -n "$VER_ID" ]]; then
+              echo "Deleting version $VER_ID (tag $T)"
+              curl -fsSL -X DELETE \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/packages/container/$PKG/versions/$VER_ID"
+              echo "Deleted tag $T"
+            else
+              echo "Tag $T not found, skip"
+            fi
+          done
