@@ -3,6 +3,7 @@
 ###################
 FROM docker.io/rust:alpine AS builder
 
+ARG TARGETPLATFORM
 RUN apk add --update git \
     musl-dev \
     musl-tools \
@@ -15,25 +16,29 @@ RUN apk add --update git \
     make
 
 RUN set -ex; \
-    TARGET=""; \
-    if [ "$(uname -m)" = "x86_64" ]; then TARGET=x86_64-unknown-linux-musl; fi; \
-    if [ "$(uname -m)" = "aarch64" ]; then TARGET=aarch64-unknown-linux-musl; fi; \
+    case "${TARGETPLATFORM}" in \
+        linux/amd64)  TARGET=x86_64-unknown-linux-musl ;; \
+        linux/arm64)  TARGET=aarch64-unknown-linux-musl ;; \
+        *) echo "unsupported ${TARGETPLATFORM}" ; exit 1 ;; \
+    esac; \
     rustup target add "${TARGET}"
 
 RUN cd /opt && \
     git clone https://gitlab.torproject.org/tpo/core/arti.git && \
     cd /opt/arti && \
     set -ex; \
-    TARGET=""; \
-    if [ "$(uname -m)" = "x86_64" ]; then TARGET=x86_64-unknown-linux-musl; fi; \
-    if [ "$(uname -m)" = "aarch64" ]; then TARGET=aarch64-unknown-linux-musl; fi; \
+    case "${TARGETPLATFORM}" in \
+        linux/amd64)  TARGET=x86_64-unknown-linux-musl ;; \
+        linux/arm64)  TARGET=aarch64-unknown-linux-musl ;; \
+        *) echo "unsupported ${TARGETPLATFORM}" ; exit 1 ;; \
+    esac; \
     cargo build --locked --release \
         --target "${TARGET}" \
         --package arti \
         --features static
 
 ##################
-# debug runner (alpine, with ash shell)
+# debug runner (alpine, ash shell)
 ##################
 FROM alpine AS arti-debug
 COPY --from=builder /opt/arti/target/*-unknown-linux-musl/release/arti /usr/local/bin/arti
@@ -43,7 +48,7 @@ ENTRYPOINT ["arti"]
 CMD ["proxy"]
 
 ##################
-# production runner (scratch, minimal, no shell)
+# production runner (scratch, minimal no‑shell)
 ##################
 FROM scratch AS arti
 COPY --from=builder /opt/arti/target/*-unknown-linux-musl/release/arti /usr/local/bin/arti
