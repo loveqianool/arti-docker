@@ -16,7 +16,7 @@ RUN apk add --update git \
 WORKDIR /opt
 RUN git clone https://gitlab.torproject.org/tpo/core/arti.git
 WORKDIR /opt/arti
-RUN cargo build --locked --release --package arti
+RUN cargo build --locked --release --package arti --features static
 
 ##################
 # --- runner --- #
