@@ -1,147 +1,112 @@
-name: Build Docker Image
-
+name: Build Multi‑Arch Docker Image
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 7 * * 1'
 
+permissions:
+  packages: write
+  contents: read
+
 jobs:
-  # Job 1: 构建AMD64镜像并压缩
-  build-amd64:
+  build-slim-amd64:
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@master
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Container registry
-        uses: docker/login-action@master
+      - name: Login GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 构建AMD64基础镜像
-      - name: Build and push AMD64 base
-        uses: docker/build-push-action@master
+      - name: Build AMD64 to local daemon
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:base-amd64
-            ghcr.io/${{ github.repository }}:latest-amd64
+          push: false
+          outputs: type=docker
+          tags: ghcr.io/${{ github.repository }}:tmp-amd64
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,scope=amd64,mode=max
 
-      # 压缩AMD64镜像
-      - name: Slim AMD64 image
+      - name: Slim AMD64
         uses: kitabisa/docker-slim-action@master
         env:
           DSLIM_HTTP_PROBE: false
-          DSLIM_INCLUDE_PATH: /var/lib/tor
+          DSLIM_INCLUDE_PATH: /app
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
-          target: ghcr.io/${{ github.repository }}:latest-amd64
-          tag: slim-amd64
+          target: ghcr.io/${{ github.repository }}:tmp-amd64
+          tag: tmp-slim-amd64
 
-      - name: Push AMD64 slim
-        run: |
-          docker push ghcr.io/${{ github.repository }}:slim-amd64
+      - name: Push temporary amd64 slim
+        run: docker push ghcr.io/${{ github.repository }}:tmp-slim-amd64
 
-  # Job 2: 构建ARM64镜像并压缩（使用原生ARM runner）
-  build-arm64:
-    runs-on: ubuntu-24.04-arm  # GitHub原生ARM64 runner
-    permissions:
-      packages: write
-      contents: read
-
+  build-slim-arm64:
+    runs-on: ubuntu-24.04-arm
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@master
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Container registry
-        uses: docker/login-action@master
+      - name: Login GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 构建ARM64基础镜像
-      - name: Build and push ARM64 base
-        uses: docker/build-push-action@master
+      - name: Build ARM64 to local daemon
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:base-arm64
-            ghcr.io/${{ github.repository }}:latest-arm64
+          push: false
+          outputs: type=docker
+          tags: ghcr.io/${{ github.repository }}:tmp-arm64
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,scope=arm64,mode=max
 
-      # 压缩ARM64镜像（ARM runner原生支持）
-      - name: Slim ARM64 image
+      - name: Slim ARM64
         uses: kitabisa/docker-slim-action@master
         env:
           DSLIM_HTTP_PROBE: false
-          DSLIM_INCLUDE_PATH: /var/lib/tor
+          DSLIM_INCLUDE_PATH: /app
           DSLIM_INCLUDE_EXE: /usr/local/bin/arti
         with:
-          target: ghcr.io/${{ github.repository }}:latest-arm64
-          tag: slim-arm64
+          target: ghcr.io/${{ github.repository }}:tmp-arm64
+          tag: tmp-slim-arm64
 
-      - name: Push ARM64 slim
-        run: |
-          docker push ghcr.io/${{ github.repository }}:slim-arm64
+      - name: Push temporary arm64 slim
+        run: docker push ghcr.io/${{ github.repository }}:tmp-slim-arm64
 
-  # Job 3: 创建多架构manifest（可选）
-  create-manifest:
+  final-manifest:
     runs-on: ubuntu-latest
-    needs: [build-amd64, build-arm64]
-    permissions:
-      packages: write
-      contents: read
-
+    needs: [build-slim-amd64, build-slim-arm64]
     steps:
-      - name: Log in to Container registry
-        uses: docker/login-action@master
+      - name: Login GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 创建基础镜像manifest
-      - name: Create base manifest
-        run: |
-          docker manifest create ghcr.io/${{ github.repository }}:base \
-            ghcr.io/${{ github.repository }}:base-amd64 \
-            ghcr.io/${{ github.repository }}:base-arm64
-          docker manifest push ghcr.io/${{ github.repository }}:base
-
-      # 创建latest manifest
-      - name: Create latest manifest
-        run: |
-          docker manifest create ghcr.io/${{ github.repository }}:latest \
-            ghcr.io/${{ github.repository }}:latest-amd64 \
-            ghcr.io/${{ github.repository }}:latest-arm64
-          docker manifest push ghcr.io/${{ github.repository }}:latest
-
-      # 创建slim manifest
-      - name: Create slim manifest
+      - name: Create & push slim multi‑arch manifest
         run: |
           docker manifest create ghcr.io/${{ github.repository }}:slim \
-            ghcr.io/${{ github.repository }}:slim-amd64 \
-            ghcr.io/${{ github.repository }}:slim-arm64
+            ghcr.io/${{ github.repository }}:tmp-slim-amd64 \
+            ghcr.io/${{ github.repository }}:tmp-slim-arm64
           docker manifest push ghcr.io/${{ github.repository }}:slim
+
+      - name: Optional clean‑up temporary tags
+        run: |
+          echo "临时标签 tmp‑* 无需删除；GHCR标签无法直接通过docker cli删除，如需清理请网页端手动删除"
