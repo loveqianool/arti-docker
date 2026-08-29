@@ -7,8 +7,10 @@ RUN apk add --update git \
     musl-dev \
     pkgconfig \
     openssl-dev \
+    openssl-libs-static \
     perl \
     sqlite-dev \
+    sqlite-static \
     make
 
 WORKDIR /opt
