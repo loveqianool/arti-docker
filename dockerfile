@@ -28,7 +28,12 @@ COPY --from=builder /opt/arti/target/release/arti /usr/local/bin/arti
 
 USER 65532
 WORKDIR /var/lib/tor
-COPY --chown=65532:65532 ./arti.toml /var/lib/tor/.config/arti/arti.toml
+RUN mkdir -p /var/lib/tor/.config/arti && \
+    echo '[proxy]\n\
+socks_listen = "0.0.0.0:9150"\n\
+' \
+> /var/lib/tor/.config/arti/arti.toml && \
+    chown -R 65532:65532 /var/lib/tor
 
 ENTRYPOINT [ "/usr/local/bin/arti" ]
 CMD [ "help" ]
